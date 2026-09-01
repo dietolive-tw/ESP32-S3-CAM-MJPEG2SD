@@ -1,0 +1,25 @@
+# PlatformIO build artifacts
+.pio/
+.pioinstall/
+
+# Backup libraries
+*.bak/
+lib/**/*.bak/
+
+# IDE / editor
+.vscode/
+.idea/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.bin
+*.elf
+*.map
+!src/extras/**/*.bin
+
+# Logs
+*.log
