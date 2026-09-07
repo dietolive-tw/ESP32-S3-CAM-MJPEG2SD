@@ -3,8 +3,8 @@
 
   When pirGate is enabled, the camera is kept in standby (deinitialized) until
   a PIR rising edge (or an incoming web stream / still capture request) wakes
-  it. After waking, FOMO confirmation runs for up to pirGateArmSecs; if no
-  target is detected in that window the camera returns to standby. Once a
+   it. After waking, the camera stays active for up to pirGateArmSecs to
+   allow visual motion confirmation. Once a
   recording starts, normal motion/record logic takes over; when the recording
   ends the camera stays active for pirGatePostRecSecs before going back to
   standby. After boot, the camera stays active for pirGateBootIdleSecs to allow
@@ -19,7 +19,7 @@
 
 // ---------- user configuration ----------
 bool pirGate = false;                 // enable PIR-gated camera power management
-uint16_t pirGateArmSecs = 20;          // FOMO confirmation window after PIR trigger
+uint16_t pirGateArmSecs = 20;          // camera active window after PIR trigger (secs)
 uint16_t pirGateIdleSecs = 30;        // (reserved) idle time after PIR-only false alarm
 uint16_t pirGatePostRecSecs = 30;     // idle time after recording ends before standby
 uint16_t pirGateBootIdleSecs = 60;    // idle time after boot before first standby

@@ -55,20 +55,13 @@ bool updateAppStatus(const char* variable, const char* value, bool fromUser) {
   else if (!strcmp(variable, "detectStartBand")) detectStartBand = intVal;
   else if (!strcmp(variable, "detectEndBand")) detectEndBand = intVal;
   else if (!strcmp(variable, "detectChangeThreshold")) detectChangeThreshold = intVal;
-  else if (!strcmp(variable, "mlUse")) mlUse = (bool)intVal;
-  else if (!strcmp(variable, "mlProbability")) mlProbability = fltVal < 0 ? 0.0 : (fltVal > 1.0 ? 1.0 : fltVal);
-  else if (!strcmp(variable, "mlTrackClass")) {
-    // target class name for FOMO tracking; empty string = track any class
-    strncpy(mlTrackClass, value, sizeof(mlTrackClass) - 1);
-    mlTrackClass[sizeof(mlTrackClass) - 1] = 0;
-  }
   else if (!strcmp(variable, "pirGate")) {
     pirGate = (bool)intVal;
     // PIR gating requires motion confirmation before recording.
     // Auto-enable useMotion (background-subtraction visual motion detection)
     // as the confirmer for PIR triggers: PIR wakes camera, motion detection
     // confirms actual visual change, then recording starts.
-    // Disable trackMotion so FOMO/steppers don't recenter the camera away
+    // Disable trackMotion so the steppers don't recenter the camera away
     // from the scene that PIR just detected motion in.
 #if INCLUDE_PERIPH
     if (pirGate) {
@@ -82,12 +75,7 @@ bool updateAppStatus(const char* variable, const char* value, bool fromUser) {
       pirGateSetup();
       if (pirPin) attachInterrupt(digitalPinToInterrupt(pirPin), pirGatePIRisr, RISING);
     }
-#endif
-#if INCLUDE_TINYML
-    // FOMO (mlUse) remains available as a motion filter on top of visual
-    // motion detection, but is not required for pirGate.
-    if (pirGate && !mlUse) mlUse = false; // respect user setting
-#endif
+ #endif
   }
   else if (!strcmp(variable, "pirGateArmSecs")) pirGateArmSecs = (uint16_t)intVal;
   else if (!strcmp(variable, "pirGateIdleSecs")) pirGateIdleSecs = (uint16_t)intVal;
@@ -262,7 +250,6 @@ bool updateAppStatus(const char* variable, const char* value, bool fromUser) {
   else if (!strcmp(variable, "stepperUse")) stepperUse = (bool)intVal;
   else if (!strcmp(variable, "trackMotion")) trackMotion = (bool)intVal;
   else if (!strcmp(variable, "trackSwap")) trackSwap = (bool)intVal;
-  else if (!strcmp(variable, "trackRecenterSecs")) trackRecenterSecs = (uint16_t)intVal;
   // PTZ stepper control via web: steps, RPM, direction per axis
   // value format: "<steps>,<rpm>,<clockwise>" eg "512,10,1"
   else if (!strcmp(variable, "stepperPan")) {
@@ -1208,9 +1195,6 @@ detectNumBands~10~1~N~Total num of detection bands
 detectStartBand~3~1~N~Top band where motion is checked
 detectEndBand~8~1~N~Bottom band where motion is checked
 detectChangeThreshold~15~1~N~Pixel difference to indicate change
-mlUse~0~1~C~Use Machine Learning
-mlProbability~0.8~1~N~ML minimum positive probability 0.0 - 1.0
-mlTrackClass~~1~T~Target class for FOMO tracking (eg person, cat, car; empty=any)
 depthColor~0~1~C~Color depth for motion detection: Gray <> RGB
 streamVid~0~8~C~Enable NVR Video stream: /sustain?video=1
 streamAud~0~8~C~Enable NVR Audio stream: /sustain?audio=1
@@ -1309,9 +1293,8 @@ stepperUse~1~3~C~Enable stepper motors
 stepperZero~0~3~C~Zero steppers to center (90°)
 trackMotion~0~3~C~Auto track motion object
 trackSwap~0~3~C~Swap pan/tilt axes for tracking (rotated sensor)
-trackRecenterSecs~10~3~N~Seconds with no FOMO target before auto recenter (0=off)
 pirGate~0~3~C~PIR-gated camera power (camera off until PIR fires)
-pirGateArmSecs~20~3~N~PIR gate: FOMO confirmation window (secs)
+pirGateArmSecs~20~3~N~PIR gate: camera active window after PIR (secs)
 pirGateIdleSecs~30~3~N~PIR gate: idle after PIR false alarm (secs)
 pirGatePostRecSecs~30~3~N~PIR gate: idle after recording ends (secs)
 pirGateBootIdleSecs~60~3~N~PIR gate: idle after boot before standby (secs)

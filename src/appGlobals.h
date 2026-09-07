@@ -86,23 +86,6 @@
 #define USE_DS3231 false   // Needs Makuna Rtc library
 #define USE_LCD1602 false  // none
 
-// To include Edge Impulse arduino library for additional motion detect filtering
-// Use Edge Impulse Studio to create model:
-// - For object tracking (recommended): create an Object Detection project with
-//   FOMO (Faster Objects, More Objects) architecture. Label images with bounding
-//   boxes for person/pet/vehicle etc. Deploy as Arduino library.
-// - For motion filtering only: create an Image Classification project.
-// - Select target device: Espressif ESP-EYE (or any ESP32-S3 with PSRAM)
-// - Select Arduino library deployment
-// - Unzip created library into Arduino libraries folder (or pio lib install)
-// To compile app with library:
-#define INCLUDE_TINYML true  // set to true 
-#define TINY_ML_LIB "Person_detection_FOMO_inferencing.h" // Edge Impulse FOMO person detection
-// To activate ML, under web page Motion tab, select Use Machine Learning option.
-// For FOMO object tracking, also enable Auto track motion object, and set
-// mlTrackClass to the target label name (eg "person", "cat", "car").
-// Empty mlTrackClass = track any detected class.
-
 /**************************************************************************/
 
 #define ALLOW_SPACES false  // set true to allow whitespace in configs.txt key values
@@ -373,9 +356,6 @@ extern int detectNumBands;
 extern int detectStartBand;
 extern int detectEndBand; // inclusive
 extern int detectChangeThreshold; // min difference in pixel comparison to indicate a change
-extern bool mlUse; // whether to use ML for motion detection, requires INCLUDE_TINYML to be true
-extern float mlProbability; // minimum probability (0.0 - 1.0) for positive classification
-extern char mlTrackClass[32]; // target class name for FOMO tracking; empty = any class
 
 // record timelapse avi independently of motion capture, file name has same format as avi except ends with T
 extern int tlSecsBetweenFrames; // too short interval will interfere with other activities
@@ -433,7 +413,6 @@ extern float motionCentroidX; // motion centroid X (0.0~1.0, -1.0 if none)
 extern float motionCentroidY; // motion centroid Y (0.0~1.0, -1.0 if none)
 extern bool trackMotion; // enable auto-tracking of motion object
 extern bool trackSwap;   // swap X/Y axes for motion tracking (for rotated sensor)
-extern uint16_t trackRecenterSecs; // FOMO tracking: seconds with no target before auto-recenter; 0 = disabled
 extern uint32_t manualStepperUntilMs; // manual pan/tilt control suppresses trackMotion until this time
 extern int32_t panCalSteps[2];  // calibration: raw steps at 0% and 100% ends (pan)
 extern int32_t tiltCalSteps[2]; // calibration: raw steps at 0% and 100% ends (tilt)
@@ -474,7 +453,7 @@ extern int srtInterval;
 
 // PIR-gated camera power management
 extern bool pirGate;                  // enable PIR-gated camera standby
-extern uint16_t pirGateArmSecs;       // FOMO confirmation window after PIR (secs)
+extern uint16_t pirGateArmSecs;       // camera active window after PIR trigger (secs)
 extern uint16_t pirGateIdleSecs;      // (reserved) idle after PIR false alarm (secs)
 extern uint16_t pirGatePostRecSecs;   // idle after recording ends before standby (secs)
 extern uint16_t pirGateBootIdleSecs;  // idle after boot before first standby (secs)

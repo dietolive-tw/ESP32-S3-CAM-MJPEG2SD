@@ -447,23 +447,14 @@ static boolean processFrame() {
   // determine if time to check for motion change
   int reasonId = 0;
   bool prevMotion = haveMotion;
-#if INCLUDE_TINYML
-  // FOMO tracking mode (mlUse && trackMotion) acts as a motion detector on
-  // its own: the classifier decides whether the target class is present, so
-  // it must run the full motion check path even if the user has disabled
-  // generic background-subtraction motion detection (useMotion=false).
-  bool mlTrackingMode = mlUse && trackMotion;
-#else
-  bool mlTrackingMode = false;
-#endif
   if (doMonitor(doRecording ? isCapturing : dbgMotion ? false : true)) {
-    if ((useMotion || mlTrackingMode) && checkMotion(fb, isCapturing)) reasonId = 1;
-    if (!useMotion && !mlTrackingMode) checkMotion(fb, false, true); // calc light level only
+    if (useMotion && checkMotion(fb, isCapturing)) reasonId = 1;
+    if (!useMotion) checkMotion(fb, false, true); // calc light level only
 #if INCLUDE_PERIPH
     // PIR directly triggers recording ONLY when visual motion detection is
-    // disabled (useMotion=false && no FOMO tracking). When useMotion is on,
-    // PIR only wakes the camera (via pirGatePIRisr if pirGate enabled, or
-    // just passively); recording requires visual motion confirmation.
+    // disabled (useMotion=false). When useMotion is on, PIR only wakes the
+    // camera (via pirGatePIRisr if pirGate enabled, or just passively);
+    // recording requires visual motion confirmation.
     bool pirTriggered = pirUse && getPIRval();
     if (pirTriggered) {
       static uint32_t lastPirLog = 0;
@@ -473,7 +464,7 @@ static boolean processFrame() {
         lastPirLog = millis();
       }
     }
-    if (pirTriggered && !useMotion && !mlTrackingMode) reasonId = 2;
+    if (pirTriggered && !useMotion) reasonId = 2;
 #endif
 #if INCLUDE_I2C && USE_MPU
     if (accelUse && checkAccelMove()) reasonId = 3;
@@ -482,8 +473,7 @@ static boolean processFrame() {
   }
 
 #if INCLUDE_PERIPH
-  // auto-track motion object if enabled; called every frame so that
-  // trackMotionObject() can also handle target-lost recentering
+  // auto-track motion object if enabled; called every frame
   if (trackMotion) trackMotionObject();
 #endif
 
@@ -818,9 +808,6 @@ bool prepRecording() {
   for (int i = 0; i < vidStreams; i++) frameSemaphore[i] = xSemaphoreCreateBinary();
   reloadConfigs(); // apply camera config
   if (!startSDtasks()) return false;
-#if INCLUDE_TINYML
-  LOG_INF("%sUsing TinyML", mlUse ? "" : "Not ");
-#endif
 
   if (!sdCardPresent) {
     // prevent recording

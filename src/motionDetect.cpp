@@ -13,29 +13,10 @@
  When frame size is changed the OV2640 outputs a few glitched frames whilst it 
  makes the transition. These could be interpreted as spurious motion.
 
- Machine Learning can be incorporated to further discriminate when motion detection 
- has occurred by classifying whether the object in the frame is of a particular
- type of interest, eg a human, animal, vehicle etc. 
- 
- s60sc 2020, 2023, 2025
+  s60sc 2020, 2023, 2025
 */
 
 #include "appGlobals.h"
-
-#if INCLUDE_TINYML
-#include TINY_ML_LIB
-
-// Edge Impulse library declares ei_printf() as extern; route it to the
-// serial output so model runtime messages show up in the serial monitor.
-void ei_printf(const char *format, ...) {
-  char buf[160];
-  va_list ap;
-  va_start(ap, format);
-  vsnprintf(buf, sizeof(buf), format, ap);
-  va_end(ap);
-  Serial.print(buf);
-}
-#endif
 
 #define INACTIVE_COLOR 96 // color for inactive motion pixel
 #define JPEG_QUAL 80 // % quality for generated motion detect jpeg
@@ -52,8 +33,6 @@ int detectEndBand = 8; // inclusive
 int detectChangeThreshold = 15; // min difference in pixel comparison to indicate a change
 uint8_t colorDepth; // set by depthColor config
 static size_t stride;
-bool mlUse = false; // whether to use ML for motion detection, requires INCLUDE_TINYML to be true
-float mlProbability = 0.8; // minimum probability (0.0 - 1.0) for positive classification
 
 uint8_t lightLevel; // Current ambient light level 
 uint8_t nightSwitch = 20; // initial white level % for night/day switching
@@ -61,20 +40,12 @@ float motionVal = 8.0; // initial motion sensitivity setting
 uint8_t* motionJpeg = NULL;
 size_t motionJpegLen = 0;
 static uint8_t* currBuff = NULL;
-// Classifier input buffer pointer (set by tinyMLclassify). When non-NULL,
-// getImageData() reads from this buffer instead of currBuff so the classifier
-// can use a separate 64x64 buffer without disturbing the 96x96 motion bitmap.
-static uint8_t* g_mlInputBuff = NULL;
-static size_t g_mlInputWidth = 0;
-static size_t g_mlInputHeight = 0;
 
 // Motion centroid for object tracking (-1.0 when no motion)
 float motionCentroidX = -1.0;
 float motionCentroidY = -1.0;
 bool trackMotion = false; // enable auto-tracking of motion
 bool trackSwap = false;  // swap X/Y axes for motion tracking (for rotated sensor)
-char mlTrackClass[32] = ""; // target class name for FOMO tracking; empty = any class
-uint16_t trackRecenterSecs = 10; // FOMO tracking: seconds with no target before auto-recenter; 0 = disabled
 uint32_t manualStepperUntilMs = 0; // manual pan/tilt control suppresses trackMotion until this time
 int32_t panCalSteps[2] = {0, 0};   // calibration: raw steps at 0% and 100% ends (pan)
 int32_t tiltCalSteps[2] = {0, 0};  // calibration: raw steps at 0% and 100% ends (tilt)
@@ -177,132 +148,6 @@ static void rgbToGray(uint8_t* buffer, int width, int height) {
     buffer[i] = (uint8_t)(((77 * buffer[index]) + (150 * buffer[index + 1]) + (29 * buffer[index + 2])) >> 8);
   }
 }
-
-#if INCLUDE_TINYML
-
-static int getImageData(size_t offset, size_t length, float *out_ptr) {
-  // copy to features as grayscale or RGB
-  // Source buffer is g_mlInputBuff (set by tinyMLclassify) so that the
-  // classifier can read from a separate 64x64 buffer without disturbing
-  // the 96x96 currBuff used by motion detection.
-  uint8_t* src = g_mlInputBuff ? g_mlInputBuff : currBuff;
-  size_t pixelPtr = offset * colorDepth;
-  size_t out_ptr_idx = 0;
-  while (out_ptr_idx < length) {
-    out_ptr[out_ptr_idx++] = (colorDepth == RGB888_BYTES)  
-      ? (float)((src[pixelPtr] << 16) + (src[pixelPtr + 1] << 8) + src[pixelPtr + 2])
-      : (float)((src[pixelPtr] << 16) + (src[pixelPtr] << 8) + src[pixelPtr]);  
-    pixelPtr += colorDepth;
-  } 
-  return 0;
-}
-
-// Run ML classifier on current 96x96 image in currBuff.
-// - Classification model: returns true if top class probability > mlProbability
-//   (used as motion filter; does not modify centroid)
-// - FOMO object detection model: returns true if a target class is detected
-//   with probability > mlProbability. As a side effect, updates
-//   motionCentroidX/Y with the highest-confidence target centroid so that
-//   trackMotionObject() can drive the pan/tilt steppers to follow the object.
-//   If no target is detected, sets motionCentroidX/Y = -1.0 so that
-//   trackMotionObject() stops moving.
-// mlTrackClass: target class name (case-insensitive). Empty = any class.
-static bool tinyMLclassify(size_t RESIZE_DIM) {
-  bool out = false;
-  uint32_t dTime = millis(); 
-  // reduce size of bitmap to that required by classifier and copy to features as grayscale or RGB
-  // IMPORTANT: use a separate buffer for classifier input. Reusing currBuff would
-  // overwrite the 96x96 motion-detection bitmap with the 64x64 scaled-down image
-  // and break subsequent frame-to-frame comparison in checkMotion().
-  signal_t features_signal;
-  if ((int)RESIZE_DIM != EI_CLASSIFIER_INPUT_WIDTH) {
-    size_t tempSize = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT * colorDepth;
-    static uint8_t* mlBuff = NULL;
-    if (mlBuff == NULL) mlBuff = (uint8_t*)ps_malloc(EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT * RGB888_BYTES);
-    if (mlBuff == NULL) {
-      LOG_WRN("tinyML: alloc %u bytes failed", tempSize);
-      return false;
-    }
-    rescaleImage(currBuff, RESIZE_DIM, RESIZE_DIM, mlBuff, EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT);
-    // features_signal.get_data reads from this buffer via getImageData()
-    g_mlInputBuff = mlBuff;
-  } else {
-    g_mlInputBuff = currBuff;
-  }
-  features_signal.total_length = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;
-  features_signal.get_data = &getImageData;
-
-  // Run the classifier
-  ei_impulse_result_t result = { 0 };
-  EI_IMPULSE_ERROR res = run_classifier(&features_signal, &result, false);
-  if (res != EI_IMPULSE_OK) {
-    LOG_WRN("Failed to run classifier (%d)", res);
-    return false;
-  }
-
-#if EI_CLASSIFIER_OBJECT_DETECTION
-  // ---- FOMO object detection: locate target object(s) in frame ----
-  float bestProb = 0.0f;
-  float bestCx = -1.0f, bestCy = -1.0f;
-  bool targetFound = false;
-  char summary[256] = {0};
-  size_t slen = 0;
-
-  for (uint16_t i = 0; i < result.bounding_boxes_count; i++) {
-    ei_impulse_result_bounding_box_t* bb = &result.bounding_boxes[i];
-    if (bb->value <= 0.0f) continue;
-    // Filter by target class if user specified one (case-insensitive match)
-    if (mlTrackClass[0] != 0) {
-      if (bb->label == NULL || strcasecmp(bb->label, mlTrackClass) != 0) continue;
-    }
-    if (dbgVerbose && slen < sizeof(summary) - 32) {
-      slen += snprintf(summary + slen, sizeof(summary) - slen - 1,
-                       "%s: %.2f@(%u,%u %ux%u), ",
-                       bb->label ? bb->label : "?", bb->value, bb->x, bb->y, bb->width, bb->height);
-    }
-    if (bb->value >= mlProbability && bb->value > bestProb) {
-      bestProb = bb->value;
-      // FOMO outputs grid cells whose center is the object centroid.
-      // Centroid in normalized coords 0.0~1.0
-      float cx = (bb->x + bb->width / 2.0f) / (float)EI_CLASSIFIER_INPUT_WIDTH;
-      float cy = (bb->y + bb->height / 2.0f) / (float)EI_CLASSIFIER_INPUT_HEIGHT;
-      bestCx = constrain(cx, 0.0f, 1.0f);
-      bestCy = constrain(cy, 0.0f, 1.0f);
-      targetFound = true;
-    }
-  }
-
-  if (targetFound) {
-    out = true;
-    motionCentroidX = bestCx;
-    motionCentroidY = bestCy;
-  } else {
-    // No target detected: invalidate centroid so tracking stops
-    motionCentroidX = -1.0;
-    motionCentroidY = -1.0;
-  }
-  LOG_INF("FOMO: %s in %ums (best %.2f @ %.2f,%.2f) -> %s",
-          summary, millis() - dTime, bestProb, bestCx, bestCy,
-          targetFound ? "TRACK" : "none");
-#else
-  // ---- Image classification (existing path): filter only ----
-  if (result.classification[0].value > mlProbability) {
-    out = true; // sufficient classification match, so keep motion detection
-    if (dbgVerbose) {
-      LOG_VRB("Prob: %0.2f, Timing: DSP %d ms, inference %d ms, anomaly %d ms", 
-      result.classification[0].value, result.timing.dsp, result.timing.classification, result.timing.anomaly);
-      char outcome[200] = {0};
-      for (uint16_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++)
-        sprintf(outcome + strlen(outcome), "%s: %.2f, ", ei_classifier_inferencing_categories[i], result.classification[i].value);
-      LOG_VRB("Predictions - %s in %ums", outcome, millis() - dTime);
-    } 
-  } 
-#endif // EI_CLASSIFIER_OBJECT_DETECTION
-
-  return out;
-}
-#endif // INCLUDE_TINYML
-
 bool checkMotion(camera_fb_t* fb, bool motionStatus, bool lightLevelOnly) {
   // check difference between current and previous image (subtract background)
   // convert image from JPEG to downscaled RGB888 or 8 bit grayscale bitmap
@@ -420,18 +265,6 @@ bool checkMotion(camera_fb_t* fb, bool motionStatus, bool lightLevelOnly) {
   LOG_VRB("Detected %u changes, threshold %u, light level %u, in %lums", changeCount, moveThreshold, lightLevel, millis() - dTime);
   if (lightLevelOnly) return false; // no motion checking, only calc of light level
 
-#if INCLUDE_TINYML
-  // FOMO tracking mode: when ML and auto-tracking are both enabled, run the
-  // classifier on every motion check (throttled by doMonitor to ~5 fps during
-  // monitoring, slower during recording). The classifier updates
-  // motionCentroidX/Y from the detected target bounding box, overriding the
-  // background-subtraction centroid so trackMotionObject() follows the object
-  // rather than generic motion. mlTargetFound drives the motion state.
-  bool mlTrackingMode = mlUse && trackMotion;
-  bool mlTargetFound = false;
-  if (mlTrackingMode) mlTargetFound = tinyMLclassify(RESIZE_DIM);
-#endif
-
   if (dbgMotion) {
     // show motion detection during streaming for tuning
     if (!motionJpegLen) {
@@ -456,70 +289,27 @@ bool checkMotion(camera_fb_t* fb, bool motionStatus, bool lightLevelOnly) {
   } else {
     // normal motion detection
     dTime = millis();
-#if INCLUDE_TINYML
-    if (mlTrackingMode && !pirGate) {
-      // FOMO tracking: motion is driven by ML detection of target class.
-      // When pirGate is enabled, visual motion detection is used instead
-      // (PIR wakes camera, background subtraction confirms visual change).
-      // FOMO still runs above for centroid/tracking, but doesn't gate recording.
-      if (mlTargetFound) {
-        if (motionCnt == 0) LOG_INF("FOMO detect: target=%s", mlTrackClass[0] ? mlTrackClass : "any");
-        motionCnt++; // number of consecutive target detections
-        if (!motionStatus && motionCnt >= detectMotionFrames) {
-          LOG_INF("***** Motion - START (FOMO target=%s)", mlTrackClass[0] ? mlTrackClass : "any");
-          motionStatus = true; // motion started
-          dTime = millis();
-#if INCLUDE_MQTT
-          if (mqtt_active && motionCnt) {
-            sprintf(jsonBuff, "{\"MOTION\":\"ON\",\"TIME\":\"%s\"}", esp_log_system_timestamp());
-            mqttPublish(jsonBuff);
-            mqttPublishPath("motion", "on");
+    // background subtraction motion detection
+    if (!nightTime && changeCount > moveThreshold) {
+      LOG_VRB("### Change detected");
+      motionCnt++; // number of consecutive changes
+      // need minimum sequence of changes to signal valid movement
+      if (!motionStatus && motionCnt >= detectMotionFrames) {
+        LOG_VRB("***** Motion - START");
+        motionStatus = true; // motion started
+        dTime = millis();
+    	#if INCLUDE_MQTT
+        if (mqtt_active && motionCnt) {
+          sprintf(jsonBuff, "{\"MOTION\":\"ON\",\"TIME\":\"%s\"}", esp_log_system_timestamp());
+          mqttPublish(jsonBuff);
+          mqttPublishPath("motion", "on");
 #if INCLUDE_HASIO
-            mqttPublishPath("cmd", "still");
-#endif
-          }
+          mqttPublishPath("cmd", "still");
 #endif
         }
-      } else {
-        if (motionStatus) LOG_INF("FOMO: target lost, motionCnt=%lu", motionCnt);
-        motionCnt = 0;
-      }
-    } else
-#endif
-    {
-      // background subtraction motion detection
-      if (!nightTime && changeCount > moveThreshold) {
-        LOG_VRB("### Change detected");
-        motionCnt++; // number of consecutive changes
-        // need minimum sequence of changes to signal valid movement
-        if (!motionStatus && motionCnt >= detectMotionFrames) {
-          LOG_VRB("***** Motion - START");
-          motionStatus = true; // motion started
-#if INCLUDE_TINYML
-          // pass image to TinyML for classification (filter only, no tracking)
-          if (mlUse) {
-            bool fomoOk = tinyMLclassify(RESIZE_DIM);
-            LOG_INF("FOMO detect: %s (filter mode)", fomoOk ? "confirmed" : "rejected");
-            if (!fomoOk) {
-              motionCnt = 0; // not classified, so cancel motion
-              motionStatus = false;
-            }
-          }
-#endif
-          dTime = millis();
-#if INCLUDE_MQTT
-          if (mqtt_active && motionCnt) {
-            sprintf(jsonBuff, "{\"MOTION\":\"ON\",\"TIME\":\"%s\"}", esp_log_system_timestamp());
-            mqttPublish(jsonBuff);
-            mqttPublishPath("motion", "on");
-#if INCLUDE_HASIO
-            mqttPublishPath("cmd", "still");
-#endif
-          }
-#endif
-        } 
-      } else motionCnt = 0;
-    }
+    	#endif
+      } 
+    } else motionCnt = 0;
   
     if (motionStatus && !motionCnt) {
       // insufficient change or motion not classified

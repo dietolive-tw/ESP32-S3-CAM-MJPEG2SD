@@ -286,91 +286,14 @@ void trackMotionObject() {
   // called every frame from processFrame() when trackMotion is enabled
   // motionCentroidX/Y: 0.0~1.0 (0.5 = center), -1.0 = no target
   //
-  // Two tracking modes:
-  // - FOMO tracking (mlUse && trackMotion): motionCentroid comes from the
-  //   Edge Impulse object detector. When the target is lost, the centroid
-  //   becomes -1.0 and we start a recenter timer; if the target does not
-  //   return within trackRecenterSecs, the camera slowly pans/tilts back to
-  //   center (90 deg / 50%) so the next motion can be picked up.
-  // - Background subtraction tracking: motionCentroid reflects changed
-  //   pixels; when there is no change the function simply returns (no
-  //   recenter) to avoid drifting on a static scene.
+  // motionCentroid reflects changed pixels (background subtraction);
+  // when there is no change the function simply returns to avoid
+  // drifting on a static scene.
   if (!trackMotion || !stepperUse) return;
   // yield to manual pan/tilt control from web UI for 5 seconds after last manual command
   if (millis() < manualStepperUntilMs) return;
 
-  static uint32_t lostSince = 0; // millis() when target was first lost
-  static bool recentering = false;
-
-  bool fomoMode =
-#if INCLUDE_TINYML
-      mlUse;
-#else
-      false;
-#endif
-
-  if (motionCentroidX < 0.0 || motionCentroidY < 0.0) {
-    // No target centroid available
-    if (!fomoMode) return; // background-subtraction mode: just wait
-    // FOMO mode: start or continue lost timer
-    if (lostSince == 0) lostSince = millis();
-    uint32_t lostMs = millis() - lostSince;
-    if (trackRecenterSecs == 0 || lostMs < (uint32_t)trackRecenterSecs * 1000) {
-      // still within grace period; hold position
-      return;
-    }
-    // grace period elapsed: nudge toward center a small step each interval
-    // until both axes reach center, then stop. Throttle to avoid hammering
-    // the stepper timer mutex: stepperRun takes ~117ms for 40 steps at 10 RPM,
-    // so only re-issue a recenter command every 250ms.
-    static uint32_t lastRecenterMs = 0;
-    const uint32_t recenterIntervalMs = 250;
-    const int recenterStep = 5; // degrees per interval toward center
-    bool moved = false;
-    uint32_t now = millis();
-    bool canRecenter = (now - lastRecenterMs) >= recenterIntervalMs
-                      && !stepperIsRunning(0) && !stepperIsRunning(1);
-    if (canRecenter) {
-      if (stepINpins[0][0] > 0) {
-        int curAngle = (int)stepperGetPosition(0) * 180 / 100;
-        int targetAngle = 90; // 50% position
-        if (abs(curAngle - targetAngle) >= recenterStep) {
-          int newAngle = curAngle + (targetAngle > curAngle ? recenterStep : -recenterStep);
-          newAngle = constrain(newAngle, 0, 180);
-          setCamPan(newAngle);
-          moved = true;
-        }
-      }
-      if (stepINpins[1][0] > 0) {
-        int curAngle = (int)stepperGetPosition(1) * 180 / 100;
-        int targetAngle = 90;
-        if (abs(curAngle - targetAngle) >= recenterStep) {
-          int newAngle = curAngle + (targetAngle > curAngle ? recenterStep : -recenterStep);
-          newAngle = constrain(newAngle, 0, 180);
-          setCamTilt(newAngle);
-          moved = true;
-        }
-      }
-      if (moved) lastRecenterMs = now;
-    }
-    if (moved) {
-      recentering = true;
-      LOG_INF("track: target lost %lus, recentering pan=%d tilt=%d",
-              lostMs / 1000,
-              (int)stepperGetPosition(0), (int)stepperGetPosition(1));
-    } else if (recentering) {
-      LOG_INF("track: recenter complete");
-      recentering = false;
-    }
-    return;
-  }
-
-  // Target is visible: reset lost timer and recenter flag
-  if (lostSince != 0 || recentering) {
-    LOG_INF("track: target reacquired after %lus", (millis() - lostSince) / 1000);
-    lostSince = 0;
-    recentering = false;
-  }
+  if (motionCentroidX < 0.0 || motionCentroidY < 0.0) return; // no target: just wait
 
   // dead zone: don't move if object is near center (avoid jitter)
   const float deadZone = 0.15; // ±15% from center = no movement
@@ -389,9 +312,10 @@ void trackMotionObject() {
   // independently decide whether pan/tilt need adjustment (one axis should not block the other)
   bool wantPan = fabsf(offsetX) >= deadZone && stepINpins[0][0] > 0 && !stepperIsRunning(0);
   bool wantTilt = fabsf(offsetY) >= deadZone && stepINpins[1][0] > 0 && !stepperIsRunning(1);
-  // throttle stepper commands to once per second to match FOMO inference rate;
-  // without this, trackMotionObject would issue commands every frame (~50ms)
-  // using the same stale centroid, causing the stepper to run continuously
+  // throttle stepper commands to once per second to match the ~1 Hz motion
+  // check rate; without this, trackMotionObject would issue commands every
+  // frame (~50ms) using the same stale centroid, causing the stepper to run
+  // continuously
   static uint32_t lastTrackStepMs = 0;
   const uint32_t trackIntervalMs = 1000;
   bool throttle = (millis() - lastTrackStepMs) < trackIntervalMs;

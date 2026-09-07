@@ -17,7 +17,6 @@ The application supports:
 * [External Heartbeat](#external-heartbeat) support.
 * Support for peripherals: SG90 servos, MX1508 H-bridge, 28BYJ-48 stepper, HW-504 joystick, BMP280, MPU9250, MY9221 / WS2812 / SK6812 Led
 * Support for [I2C devices](#i2c-devices): BMP280, BME280, MPU6050, MPU9250, SSD1306, LCD1602, etc.
-* Interface for [Machine Learning](#machine-learning) support.
 * [Camera Hub](#camera-hub) feature to access other ESP32-CAM_MJPEG2SD devices.
 * [Photogrammetry](#photogrammetry) feature to capture photos for 3D imaging.
 * Use of [Auxiliary Board](#auxiliary-board) for additional pins.
@@ -463,36 +462,6 @@ This feature can make use of an [Auxiliary Board](#auxiliary-board).
 To incorporate, set `#define INCLUDE_PERIPH` to `true` and `#define INCLUDE_MCPWM` to `true`.
 
 #### Only use this feature if you are familiar with coding and electronics, and can fix issues yourself
-
-## Machine Learning
-
-Machine Learning AI can be used in two modes:
-
-1. **Motion filter** (image classification): when motion is detected by background subtraction, an image classification model decides whether the object is of interest (eg human, animal, vehicle) before starting a recording. 
-
-2. **Object tracking** (FOMO object detection): a FOMO (Faster Objects, More Objects) model locates the target object in each frame and returns its centroid. The centroid drives the pan/tilt steppers to automatically follow the object. The detection also acts as a motion filter, so recordings only start when the target class is present. Set the target class name via the `mlTrackClass` config (eg `person`, `cat`, `car`); leave empty to track any detected class.
-
-Only feasible on ESP32S3 due to memory use and built in AI Acceleration support.
-#### Only use this feature if you are familiar with Machine Learning
-
-The interface is designed to work with user models packaged as Arduino libraries by the [Edge Impulse](https://edgeimpulse.com/) AI platform.
-More details in `appGlobals.h`.   
-
-### Getting a model from Edge Impulse Studio
-
-1. Create an account on [Edge Impulse Studio](https://studio.edgeimpulse.com/) (free tier available).
-2. **For object tracking (recommended)**: create an **Image Object Detection** project. Upload images and label them with bounding boxes around the target objects (person, cat, dog, car, ...). Set the impulse input image size to 96x96 grayscale (matches this app's motion bitmap). Select the **FOMO** learning block in the Impulse Design.
-3. **For motion filtering only**: create an **Image Classification** project. Use 96x96 grayscale or RGB images and train the model with for example the following Transfer learning Neural Network settings:  
-
-<img src="extras/TinyML.png" width="500" height="400">
-
-4. On the **Deployment** tab, select **Arduino library** and download the .zip.
-5. Install the library in PlatformIO by unzipping into `~/.platformio/lib/` (or `pio lib install <path-to-zip>`). The library header name (eg `your_project_inference.h`) must match `TINY_ML_LIB` in `appGlobals.h`.
-6. Set `#define INCLUDE_TINYML true` in `appGlobals.h` and rebuild.
-7. In the web UI Motion tab, enable **Use Machine Learning**. For FOMO tracking, also enable **Auto track motion object** (and configure pan/tilt stepper pins under the Peripherals tab), then set `mlTrackClass` to the target label name.
-
-> Note: FOMO object detection runs on every motion check (~5 fps when monitoring, slower while recording), updating the tracking centroid each time. Inference typically takes 30-80 ms on ESP32-S3 @ 240 MHz.
-
 
 ## Camera Hub
 
