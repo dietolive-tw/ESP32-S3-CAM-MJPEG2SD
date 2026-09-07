@@ -221,6 +221,12 @@ static bool loadPrefs() {
   prefs.getString("ST_Pass", ST_Pass, MAX_PWD_LEN);
   updateConfigVect("ST_Pass", ST_Pass);
   prefs.getString("AP_Pass", AP_Pass, MAX_PWD_LEN);
+  size_t apPassLen = strlen(AP_Pass);
+  if (apPassLen > 0 && apPassLen < 8) {
+    LOG_WRN("Cleared invalid stored AP_Pass length %u", (unsigned)apPassLen);
+    strcpy(AP_Pass, "");
+    prefs.putString("AP_Pass", "");
+  }
   prefs.getString("Auth_Pass", Auth_Pass, MAX_PWD_LEN); 
 #if INCLUDE_FTP_HFS
   prefs.getString("FS_Pass", FS_Pass, MAX_PWD_LEN);
@@ -242,6 +248,8 @@ void updateStatus(const char* variable, const char* _value, bool fromUser) {
   // called from controlHandler() to update app status from changes made on browser
   // or from loadConfig() to update app status from stored preferences
   bool res = true;
+  bool apPassReject = false;
+  size_t apPassLen = 0;
   char value[IN_FILE_NAME_LEN];
   strncpy(value, _value, sizeof(value));  
 #if INCLUDE_MQTT
@@ -266,8 +274,15 @@ void updateStatus(const char* variable, const char* _value, bool fromUser) {
   else if (!strcmp(variable, "AP_ip")) strncpy(AP_ip, value, MAX_IP_LEN-1);
   else if (!strcmp(variable, "AP_gw")) strncpy(AP_gw, value, MAX_IP_LEN-1);
   else if (!strcmp(variable, "AP_sn")) strncpy(AP_sn, value, MAX_IP_LEN-1);
-  else if (!strcmp(variable, "AP_SSID")) strncpy(AP_SSID, value, MAX_HOST_LEN-1);
-  else if (!strcmp(variable, "AP_Pass") && value[0] != '*') strncpy(AP_Pass, value, MAX_PWD_LEN-1); 
+  else if (!strcmp(variable, "AP_SSID")) {
+    if (!*value && *hostName) snprintf(value, sizeof(value), "%s", hostName);
+    strncpy(AP_SSID, value, MAX_HOST_LEN-1);
+  }
+  else if (!strcmp(variable, "AP_Pass") && value[0] != '*') {
+    apPassLen = strlen(value);
+    if ((apPassLen > 0 && apPassLen < 8) || apPassLen > MAX_PWD_LEN - 1) apPassReject = true;
+    else strncpy(AP_Pass, value, MAX_PWD_LEN-1);
+  } 
   else if (!strcmp(variable, "allowAP")) allowAP = (bool)intVal;
   else if (!strcmp(variable, "useHttps")) useHttps = (bool)intVal;
   else if (!strcmp(variable, "useSecure")) useSecure = (bool)intVal;
@@ -389,9 +404,10 @@ void updateStatus(const char* variable, const char* _value, bool fromUser) {
     if (intVal) savePrefs();
     saveConfigVect();
   } else {
-    res = updateAppStatus(variable, value, fromUser);
+    res = apPassReject ? false : updateAppStatus(variable, value, fromUser);
     if (!res) {
-      if (fromUser) {
+      if (apPassReject) LOG_WRN("Rejected AP_Pass length %u, must be 0 or 8-63", (unsigned)apPassLen);
+      else if (fromUser) {
         updateConfigVect(variable, value); // in case value previously set in different compilation state
         LOG_WRN("Unable to use %s as required cpp file not included", variable);
       }

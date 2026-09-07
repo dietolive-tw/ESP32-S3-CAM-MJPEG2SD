@@ -214,7 +214,7 @@ void storageEnd();
 #define LOG_STACK_SIZE (1024 * 3)
 #define AUDIO_STACK_SIZE (1024 * 4)
 #define MICREM_STACK_SIZE (1024 * 2)
-#define MQTT_STACK_SIZE (1024 * 4)
+#define MQTT_STACK_SIZE (1024 * 8)
 #define PING_STACK_SIZE (1024 * 6)
 #define PLAYBACK_STACK_SIZE (1024 * 2)
 #define SERVO_STACK_SIZE (1024 * 1)

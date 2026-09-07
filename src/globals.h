@@ -361,6 +361,7 @@ extern int wakePin;
 extern int wakeLevel;
 extern UBaseType_t uxHighWaterMarkArr[];
 extern UBaseType_t STACK_MEM;
+extern UBaseType_t FLASH_MEM;
 
 // SD storage
 extern int sdMinCardFreeSpace; // Minimum amount of card free Megabytes before freeSpaceMode action is enabled

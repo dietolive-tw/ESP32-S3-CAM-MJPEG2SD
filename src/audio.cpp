@@ -552,7 +552,7 @@ void prepAudio() {
   // Audio task only needed for esp microphone
   if (!micUse) return;
 #endif
-  if (audioHandle == NULL) xTaskCreateWithCaps(audioTask, "audioTask", AUDIO_STACK_SIZE, NULL, AUDIO_PRI, &audioHandle, STACK_MEM);
+  if (audioHandle == NULL) xTaskCreateWithCaps(audioTask, "audioTask", AUDIO_STACK_SIZE, NULL, AUDIO_PRI, &audioHandle, FLASH_MEM);
 #ifdef ISCAM
   xTaskNotifyGive(audioHandle);
 #endif

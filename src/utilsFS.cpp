@@ -359,6 +359,13 @@ static void deleteOthers(const char* baseFile) {
 #endif  
 }
 
+static bool isReservedUIFile(const char* name) {
+  // web UI files must survive a "Reload /data" wipe of the data folder
+  const char* uiFiles[] = {"MJPEG2SD.htm", "common.js", "Auxil.htm"};
+  for (const char* ui : uiFiles) if (strcmp(name, ui) == 0) return true;
+  return false;
+}
+
 void deleteFolderOrFile(const char* deleteThis) {
   // delete supplied file or folder, unless it is a reserved folder
   char fileName[FILE_NAME_LEN];
@@ -378,11 +385,17 @@ void deleteFolderOrFile(const char* deleteThis) {
   // Empty named folder first
   if (df.isDirectory() || (thisFS == SPIFFSS && strstr("/", fileName) != NULL)) {
     LOG_INF("Folder %s contents", fileName);
+    bool reservedKept = false;
     File file = df.openNextFile();
     while (file) {
       char filepath[FILE_NAME_LEN];
-      strcpy(filepath, file.path()); 
+      strcpy(filepath, file.path());
       if (file.isDirectory()) LOG_INF("  DIR : %s", filepath);
+      else if (isReservedUIFile(file.name())) {
+        file.close();
+        reservedKept = true;
+        LOG_INF("  SKIP reserved file %s", filepath);
+      }
       else {
         size_t fSize = file.size();
         file.close();
@@ -391,8 +404,8 @@ void deleteFolderOrFile(const char* deleteThis) {
       }
       file = df.openNextFile();
     }
-    // Remove the folder
-    if (df.isDirectory()) LOG_ALT("Folder %s %sdeleted", fileName, STORAGE.rmdir(fileName) ? "" : "not ");
+    // Remove the folder, unless reserved UI files were kept inside it
+    if (df.isDirectory() && !reservedKept) LOG_ALT("Folder %s %sdeleted", fileName, STORAGE.rmdir(fileName) ? "" : "not ");
     else df.close();
   } else {
     // delete individual file

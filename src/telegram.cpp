@@ -197,7 +197,7 @@ bool prepTelegram() {
         // response loaded into tgramBuff
         if (searchJsonResponse("username:")) {      
           LOG_INF("Connected to Telegram Bot Handle: %s", keyValue);
-          xTaskCreateWithCaps(appSpecificTelegramTask, "telegramTask", TGRAM_STACK_SIZE, NULL, TGRAM_PRI, &telegramHandle, STACK_MEM); 
+          xTaskCreateWithCaps(appSpecificTelegramTask, "telegramTask", TGRAM_STACK_SIZE, NULL, TGRAM_PRI, &telegramHandle, FLASH_MEM);
           debugMemory("setupTelegramTask");
           return true;
         } else LOG_WRN("getMe response not parsed %s", tgramBuff);

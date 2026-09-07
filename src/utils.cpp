@@ -23,6 +23,7 @@ bool wakeUse = false; // true to allow app to sleep and wake
 char* jsonBuff = NULL;
 char portFwd[6] = "";
 UBaseType_t STACK_MEM; // allow some task stacks to use psram if available
+UBaseType_t FLASH_MEM; // stacks for tasks doing flash/LittleFS I/O: must be in internal RAM
 float latLon[2];
 RTC_DATA_ATTR uint32_t remainingSeconds = 0;
 uint32_t deepSleepTimer = 0;
@@ -134,6 +135,8 @@ static void onNetEvent(arduino_event_id_t event, arduino_event_info_t info) {
       if (WiFi.AP.SSID().length() > 0 && WiFi.AP.SSID() == AP_SSID) {
         LOG_INF("Wifi AP SSID: %s started, use 'http%s://%s' to connect", WiFi.AP.SSID().c_str(), useHttps ? "s" : "", formatIPstr(true));
         APstarted = true;
+      } else {
+        LOG_WRN("AP_START mismatch: expected '%s', active '%s'", AP_SSID, WiFi.AP.SSID().c_str());
       }
       break;
     }
@@ -141,6 +144,8 @@ static void onNetEvent(arduino_event_id_t event, arduino_event_info_t info) {
       if (WiFi.AP.SSID() == AP_SSID) {
         LOG_INF("Wifi AP stopped: %s", AP_SSID);
         APstarted = false;
+      } else {
+        LOG_WRN("AP_STOP mismatch: expected '%s', active '%s'", AP_SSID, WiFi.AP.SSID().c_str());
       }
       break;
     }
@@ -190,7 +195,11 @@ static void setWifiAP() {
       // set static ip
       WiFi.AP.config(_ip, _gw, _sn);
     } 
-    WiFi.AP.create(AP_SSID, AP_Pass);
+    if (strlen(AP_Pass) > 0 && strlen(AP_Pass) < 8)
+      LOG_WRN("AP_Pass length %u invalid: use empty or 8+ chars", (unsigned)strlen(AP_Pass));
+    bool apCreated = WiFi.AP.create(AP_SSID, AP_Pass);
+    LOG_INF("WiFi AP create %s: SSID '%s' len %u, pass len %u, active SSID '%s'", apCreated ? "ok" : "FAILED", AP_SSID, (unsigned)strlen(AP_SSID), (unsigned)strlen(AP_Pass), WiFi.AP.SSID().c_str());
+    if (!apCreated) LOG_WRN("WiFi AP not started: SSID empty or pass length 1-7");
     debugMemory("setWifiAP");
   }
 }
@@ -1080,6 +1089,9 @@ bool utilsStartup() {
   // Original ESP32 must use internal memory for stacks
   STACK_MEM = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
 #endif
+  // flash ops disable caches so a PSRAM stack would trigger the
+  // spi_flash_disable_interrupts_caches_and_other_cpu assert
+  FLASH_MEM = MALLOC_CAP_INTERNAL;
   logSetup();
 #ifdef NEED_PSRAM
   if (psramFound()) {

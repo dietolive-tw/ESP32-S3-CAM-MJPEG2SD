@@ -372,7 +372,7 @@ bool fsStartTransfer(const char* fileFolder) {
   setFolderName(fileFolder, storedPathName);
   if (!uploadInProgress) {
     uploadInProgress = true;
-    if (fsHandle == NULL) xTaskCreateWithCaps(&fileServerTask, "fileServerTask", FS_STACK_SIZE, NULL, FTP_PRI, &fsHandle, STACK_MEM);    
+    if (fsHandle == NULL) xTaskCreateWithCaps(&fileServerTask, "fileServerTask", FS_STACK_SIZE, NULL, FTP_PRI, &fsHandle, FLASH_MEM);
     debugMemory("fsStartTransfer");
     return true;
   } else LOG_WRN("Unable to transfer %s as another transfer in progress", storedPathName);

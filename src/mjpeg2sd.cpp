@@ -248,6 +248,13 @@ void keepFrame(camera_fb_t* fb) {
   if (fb->len < maxAlertBuffSize && alertBuffer != NULL) {
     memcpy(alertBuffer, fb->buf, fb->len);
     alertBufferSize = fb->len;
+  } else if (fb->len >= maxAlertBuffSize) {
+    // frame exceeds alert buffer - silently unusable for still sends, report once
+    static uint32_t lastLog = 0;
+    if (millis() - lastLog > 7000) {
+      lastLog = millis();
+      LOG_WRN("still frame too large: %u bytes > %u max - lower camera framesize", fb->len, maxAlertBuffSize);
+    }
   }
 }
 
@@ -413,7 +420,16 @@ static boolean processFrame() {
   uint32_t dTime = millis();
 
   camera_fb_t* fb = esp_camera_fb_get();
-  if (fb == NULL || !fb->len || fb->len > maxFrameBuffSize) return false;
+  if (fb == NULL || !fb->len) return false;
+  if (fb->len > maxFrameBuffSize) {
+    // frame exceeds stream/alert buffers - report once per 7s
+    static uint32_t lastLog = 0;
+    if (millis() - lastLog > 7000) {
+      lastLog = millis();
+      LOG_WRN("frame too large: %u bytes > %u max - lower camera framesize", fb->len, maxFrameBuffSize);
+    }
+    return false;
+  }
   timeLapse(fb);
 
   for (int i = 0; i < vidStreams; i++) {
@@ -778,7 +794,7 @@ static void playbackTask(void* parameter) {
 
 static bool startSDtasks() {
   // tasks to manage SD card operation
-  xTaskCreateWithCaps(&playbackTask, "playbackTask", PLAYBACK_STACK_SIZE, NULL, PLAY_PRI, &playbackHandle, STACK_MEM);
+  xTaskCreateWithCaps(&playbackTask, "playbackTask", PLAYBACK_STACK_SIZE, NULL, PLAY_PRI, &playbackHandle, FLASH_MEM);
   xTaskCreate(&captureTask, "captureTask", CAPTURE_STACK_SIZE, NULL, CAPTURE_PRI, &captureHandle);
   if (captureHandle == NULL) {
     // Usually insufficient memory

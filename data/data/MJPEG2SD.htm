@@ -1800,6 +1800,7 @@
           else if (key == "Ethconfig") { doLoadStatus = false; getConfig("0123456789"); }
           else if (key == "camModel") customButtons(key, value);
           else if (key == "delete" || key == "uploadMove" || key == "upload") sdFile(key, value);
+          else if (key == "deldata") { doLoadStatus = true; setRecordAvailability(false); if (fromUser) sendControl(key, value); return; }
           else if (key == 'timezoneSel') fromUser = setTz(value);
           else if (key == "framesize") fromUser = setFrameSize(key, value, fromUser);
           else if (key == "get-still") getStill();

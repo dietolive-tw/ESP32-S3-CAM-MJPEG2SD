@@ -128,7 +128,7 @@ static void mqtt_data_handler(void *handler_args, esp_event_base_t base, int32_t
     LOG_INF("MQTT pan_setpos received: '%.*s' -> '%s'", event->data_len, (char*)event->data, buf);
     if (strlen(remoteQuery) == 0) sprintf(remoteQuery, "%s", buf);
     else LOG_WRN("remoteQuery busy, dropped: '%s'", buf);
-    xTaskNotifyGive(mqttTaskHandle);
+    if (mqttTaskHandle != NULL) xTaskNotifyGive(mqttTaskHandle);
   }
   else if (strncmp(event->topic, tilt_setpos_topic, event->topic_len) == 0) {
     char buf[32];
@@ -136,7 +136,7 @@ static void mqtt_data_handler(void *handler_args, esp_event_base_t base, int32_t
     LOG_INF("MQTT tilt_setpos received: '%.*s' -> '%s'", event->data_len, (char*)event->data, buf);
     if (strlen(remoteQuery) == 0) sprintf(remoteQuery, "%s", buf);
     else LOG_WRN("remoteQuery busy, dropped: '%s'", buf);
-    xTaskNotifyGive(mqttTaskHandle);
+    if (mqttTaskHandle != NULL) xTaskNotifyGive(mqttTaskHandle);
   }
   else if (strncmp(event->topic, pan_cmd_topic, event->topic_len) == 0) {
     // HA cover OPEN/CLOSE/STOP for pan
@@ -166,7 +166,7 @@ static void mqtt_data_handler(void *handler_args, esp_event_base_t base, int32_t
     else LOG_WRN("remoteQuery busy, dropped: '%.*s'", event->data_len, (char*)event->data);
     mqttConnected = true;
     LOG_VRB("Resuming mqtt thread..");
-    xTaskNotifyGive(mqttTaskHandle);
+    if (mqttTaskHandle != NULL) xTaskNotifyGive(mqttTaskHandle);
   }
 }
 
@@ -290,18 +290,26 @@ void stopMqttClient() {
     esp_mqtt_client_publish(mqtt_client, lwt_topic, "offline", 0, MQTT_LWT_QOS, MQTT_LWT_RETAIN);
     vTaskDelay(1000 / portTICK_RATE_MS);
   }
-  ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_stop(mqtt_client));
-  ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_destroy(mqtt_client));    
+  esp_mqtt_client_handle_t client = mqtt_client;
+  mqtt_client = nullptr; // block new publish paths and handler use of client
+  ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_stop(client));
+  ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_destroy(client));
   LOG_VRB("Checking mqtt task");
-  if ( mqttTaskHandle != NULL ) {
+  if ( mqttTaskHandle != NULL && xTaskGetCurrentTaskHandle() != mqttTaskHandle ) {
     LOG_VRB("Unlock task..");
     xTaskNotifyGive(mqttTaskHandle); //Unblock task
-    vTaskDelay(1500 / portTICK_RATE_MS);
+    if (!mqtt_active) {
+      // Task exits after this iteration; wait until it nulls its own handle
+      for (int i = 0; i < 30 && mqttTaskHandle != NULL; i++) {
+        vTaskDelay(100 / portTICK_RATE_MS);
+      }
+    } else {
+      vTaskDelay(100 / portTICK_RATE_MS);
+    }
     LOG_VRB("Deleted task..?");
   }
   LOG_VRB("Exiting..");
   mqttConnected = false;
-  mqtt_client = nullptr;
 }
 
 void startMqttClient(void){  
@@ -352,27 +360,41 @@ void startMqttClient(void){
     },
   };
 
+  // Fully tear down the previous client/task before rebuilding.
+  // Re-init without teardown leaks esp-mqtt workers whose handlers keep
+  // firing against globals and may notify a task that no longer exists.
+  if (mqtt_client != nullptr) {
+    esp_mqtt_client_handle_t old = mqtt_client;
+    mqtt_client = nullptr;
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_stop(old));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_destroy(old));
+  }
+  if (mqttTaskHandle != NULL) {
+    vTaskDelete(mqttTaskHandle);
+    mqttTaskHandle = NULL;
+  }
+
   mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
   LOG_INF("Mqtt connect to %s...", mqtt_uri);
   //LOG_INF("Mqtt connect pass: %s...", mqtt_user_Pass);
   if (mqtt_client != NULL) {
-    if ( mqttTaskHandle == NULL ) {
-      ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_register_event(mqtt_client, esp_mqtt_event_id_t::MQTT_EVENT_CONNECTED, mqtt_connected_handler, NULL));
-      ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_register_event(mqtt_client, esp_mqtt_event_id_t::MQTT_EVENT_DISCONNECTED, mqtt_disconnected_handler, NULL));
-      ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_register_event(mqtt_client, esp_mqtt_event_id_t::MQTT_EVENT_DATA, mqtt_data_handler, mqtt_client));
-      ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_register_event(mqtt_client, esp_mqtt_event_id_t::MQTT_EVENT_ERROR, mqtt_error_handler, mqtt_client));
-    } else {
-      vTaskDelete(mqttTaskHandle);
-      mqttTaskHandle = NULL;
-    }
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_register_event(mqtt_client, esp_mqtt_event_id_t::MQTT_EVENT_CONNECTED, mqtt_connected_handler, NULL));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_register_event(mqtt_client, esp_mqtt_event_id_t::MQTT_EVENT_DISCONNECTED, mqtt_disconnected_handler, NULL));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_register_event(mqtt_client, esp_mqtt_event_id_t::MQTT_EVENT_DATA, mqtt_data_handler, mqtt_client));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_register_event(mqtt_client, esp_mqtt_event_id_t::MQTT_EVENT_ERROR, mqtt_error_handler, mqtt_client));
     if (ESP_ERROR_CHECK_WITHOUT_ABORT(esp_mqtt_client_start(mqtt_client)) != ESP_OK) {
       LOG_WRN("Mqtt start failed");
     } else {
-      LOG_VRB("Mqtt started");        
+      LOG_VRB("Mqtt started");
       // Create a mqtt task
-      BaseType_t xReturned = xTaskCreateWithCaps(&mqttTask, "mqttTask", MQTT_STACK_SIZE, NULL, MQTT_PRI, &mqttTaskHandle, STACK_MEM);
-      LOG_INF("Created mqtt task: %u", xReturned );
-      mqttRunning = true;
+      BaseType_t xReturned = xTaskCreateWithCaps(&mqttTask, "mqttTask", MQTT_STACK_SIZE, NULL, MQTT_PRI, &mqttTaskHandle, FLASH_MEM);
+      if (xReturned == pdPASS) {
+        LOG_INF("Created mqtt task: %u", xReturned);
+        mqttRunning = true;
+      } else {
+        LOG_WRN("Mqtt task create failed, will retry");
+        mqttTaskHandle = NULL;
+      }
     }
   }
 }
